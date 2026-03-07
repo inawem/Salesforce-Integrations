@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # SQL Server Database
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      SA_PASSWORD: "YourPassword123!"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "YourPassword123!", "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - integration-network
+
+  # Azure Service Bus Emulator (using RabbitMQ for local dev)
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"  # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - integration-network
+
+  # .NET API Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=SalesforceIntegration;User Id=sa;Password=YourPassword123!;"
+      Auth0__Domain: "${AUTH0_DOMAIN}"
+      Auth0__ClientId: "${AUTH0_CLIENT_ID}"
+      Auth0__ClientSecret: "${AUTH0_CLIENT_SECRET}"
+      Salesforce__ClientId: "${SALESFORCE_CLIENT_ID}"
+      Salesforce__ClientSecret: "${SALESFORCE_CLIENT_SECRET}"
+      Salesforce__InstanceUrl: "${SALESFORCE_INSTANCE_URL}"
+      AzureServiceBus__ConnectionString: "amqp://guest:guest@rabbitmq:5672/"
+      Frontend__Url: "http://localhost:4200"
+    networks:
+      - integration-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sqlserver_data:
+  rabbitmq_data:
+
+networks:
+  integration-network:
+    driver: bridge
